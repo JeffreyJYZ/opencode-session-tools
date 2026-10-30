@@ -43,7 +43,7 @@ jobs:
       - name: Typecheck
         run: bunx tsc --noEmit
 
-      - name: Publish (trusted publishing: OIDC, no token)
+      - name: "Publish (trusted publishing: OIDC, no token)"
         run: npm publish --access public --provenance
 
       - name: GitHub release
