@@ -48,6 +48,25 @@ export default Plugin.define({
 			return { sessionID: hit.id, title: hit.title ?? "", directory: hit.location?.directory ?? "" }
 		}
 
+		/** The provenance line every question carries, e.g.
+		 * `[sent from session ses_18f2… model commandcode/deepseek-v4.1-flash#high]`.
+		 * Built from the session row rather than from tool arguments, so the sender cannot
+		 * omit or forge it, and it always precedes the question text. */
+		const senderStamp = async (sessionID: string) => {
+			let ref = "unknown"
+			try {
+				const info = await ctx.session.get({ sessionID })
+				const model = info.model
+				if (model) {
+					const variant = model.variant ? `#${model.variant}` : ""
+					ref = `${model.providerID}/${model.id}${variant}`
+				}
+			} catch {
+				// An unresolvable session still gets a stamp; the id alone is the useful half.
+			}
+			return `[sent from session ${sessionID} model ${ref}]`
+		}
+
 		await ctx.tool.transform((tools) => {
 			tools.add({
 				name: "session_list",
@@ -118,11 +137,14 @@ export default Plugin.define({
 				}),
 				execute: async (input, context) => {
 					const target = await resolve(input.session)
+					// The stamp is built here, never accepted from the caller, so no tool argument
+					// can drop or fake it: every question arrives tagged with its sender.
+					const stamp = await senderStamp(context.sessionID)
 					// `queue` lands after the target finishes what it is doing; `steer` cuts into the
 					// current turn. Queue by default so a busy session is never derailed to answer.
 					const admitted = await ctx.session.prompt({
 						sessionID: target.sessionID,
-						text: input.question,
+						text: `${stamp}\n\n${input.question}`,
 						delivery: input.delivery ?? "queue",
 						metadata: { from_session: context.sessionID, kind: "session_ask" },
 					})

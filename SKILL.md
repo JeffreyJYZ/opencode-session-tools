@@ -65,6 +65,15 @@ Sends a question to another session and returns its answer.
 ```
 
 - `session` accepts a session id (`ses_…`), an exact or partial title, or a directory.
+- Every question arrives with a provenance line the tool writes itself:
+
+  ```
+  [sent from session ses_18f2c3a9… model commandcode/deepseek-v4.1-flash#high]
+  ```
+
+  It is built from the asking session's own row, not from any argument, so it cannot be
+  dropped, and it always precedes the question text. Neither the sender nor the target can
+  remove it; treat it as the message's header.
 - `delivery: "queue"` (default) waits for the target to finish its current work, then answers.
   `delivery: "steer"` cuts into its running turn — only when the user wants that turn
   redirected.

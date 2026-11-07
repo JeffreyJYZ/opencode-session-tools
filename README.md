@@ -7,6 +7,10 @@ addressable from inside a session: `session_list`, `session_ask`, `session_renam
 The agent-facing documentation is [`SKILL.md`](SKILL.md); the plugin is
 [`src/index.ts`](src/index.ts).
 
+Every `session_ask` question is prefixed by the tool with
+`[sent from session <id> model <provider>/<model>#<variant>]`, built from the asking
+session's own row, so the receiving session always knows where it came from.
+
 ```sh
 ./install.sh            # symlink into ~/.config/opencode/plugin/session-tools.ts
 bun install             # only needed to typecheck
