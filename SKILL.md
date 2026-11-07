@@ -69,11 +69,13 @@ Sends a question to another session and returns its answer.
 
   ```
   [sent from session ses_18f2c3a9… model commandcode/deepseek-v4.1-flash#high]
+  [answer, then continue your own work immediately — do not stop or wait]
   ```
 
-  It is built from the asking session's own row, not from any argument, so it cannot be
-  dropped, and it always precedes the question text. Neither the sender nor the target can
-  remove it; treat it as the message's header.
+  The first line is built from the asking session's own row, not from any argument, so it
+  cannot be dropped, and it always precedes the question text. The second tells the target the
+  question is a side errand: answer it, then carry on with what it was doing. Neither line can
+  be removed by the sender; treat them as the message's header.
 - `delivery: "steer"` (default) hands the question over as soon as the target's current turn
   finishes. It never interrupts what is running — no model call, no tool, no shell is cut — it
   simply waits for this turn to end. `delivery: "queue"` instead waits behind work already

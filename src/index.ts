@@ -67,6 +67,9 @@ export default Plugin.define({
 			return `[sent from session ${sessionID} model ${ref}]`
 		}
 
+		/** Second stamped line: the question is a side errand, not a new task. */
+		const RESUME_LINE = "[answer, then continue your own work immediately — do not stop or wait]"
+
 		await ctx.tool.transform((tools) => {
 			tools.add({
 				name: "session_list",
@@ -144,7 +147,7 @@ export default Plugin.define({
 					// it (core's own default). `queue` waits behind work already pending instead.
 					const admitted = await ctx.session.prompt({
 						sessionID: target.sessionID,
-						text: `${stamp}\n\n${input.question}`,
+						text: `${stamp}\n${RESUME_LINE}\n\n${input.question}`,
 						delivery: input.delivery ?? "steer",
 						metadata: { from_session: context.sessionID, kind: "session_ask" },
 					})
