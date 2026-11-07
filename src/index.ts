@@ -13,6 +13,9 @@ type SessionMessageInfo = Awaited<ReturnType<Parameters<Parameters<typeof Plugin
 
 const DEFAULT_WAIT_MS = 120_000
 
+/** How often the target's transcript is re-read while waiting for its reply. */
+const POLL_MS = 400
+
 /** A session id from the list endpoint looks like `ses_…`; anything else is a title search. */
 const looksLikeID = (value: string) => /^ses_[A-Za-z0-9]+$/.test(value)
 
@@ -24,10 +27,19 @@ const textOf = (message: SessionMessageInfo | undefined) => {
 		.trim()
 }
 
-const lastAssistant = (messages: readonly SessionMessageInfo[]) => messages.filter((m) => m.type === "assistant").at(-1)
-
-/** Newest assistant text in the session, used when a wait times out mid-answer. */
-const newestAssistantText = (messages: readonly SessionMessageInfo[]) => textOf(lastAssistant(messages))
+/** Index of the last row that is our own question, matched by its stored text.
+ * `prompt()` returns an inbox id, which never appears in the context rows, so the id is a
+ * fallback only; the text is what is actually persisted on the delivered user message. */
+const lastQuestionIndex = (rows: readonly SessionMessageInfo[], payload: string, admittedID: string) => {
+	for (let i = rows.length - 1; i >= 0; i -= 1) {
+		const row = rows[i] as { type?: string; text?: unknown }
+		if (row.type === "user" && row.text === payload) return i
+	}
+	for (let i = rows.length - 1; i >= 0; i -= 1) {
+		if ((rows[i] as { id?: string }).id === admittedID) return i
+	}
+	return -1
+}
 
 export default Plugin.define({
 	id: "session-tools",
@@ -47,6 +59,28 @@ export default Plugin.define({
 			if (!hit) throw new Error(`No session matches "${needle}". Run session_list to see titles and ids.`)
 			return { sessionID: hit.id, title: hit.title ?? "", directory: hit.location?.directory ?? "" }
 		}
+
+		/** The provenance line every question carries, e.g.
+		 * `[sent from session ses_18f2… model commandcode/deepseek-v4.1-flash#high]`.
+		 * Built from the session row rather than from tool arguments, so the sender cannot
+		 * omit or forge it, and it always precedes the question text. */
+		const senderStamp = async (sessionID: string) => {
+			let ref = "unknown"
+			try {
+				const info = await ctx.session.get({ sessionID })
+				const model = info.model
+				if (model) {
+					const variant = model.variant ? `#${model.variant}` : ""
+					ref = `${model.providerID}/${model.id}${variant}`
+				}
+			} catch {
+				// An unresolvable session still gets a stamp; the id alone is the useful half.
+			}
+			return `[sent from session ${sessionID} model ${ref}]`
+		}
+
+		/** Second stamped line: the question is a side errand, not a new task. */
+		const RESUME_LINE = "[answer, then continue your own work immediately — do not stop or wait]"
 
 		await ctx.tool.transform((tools) => {
 			tools.add({
@@ -105,9 +139,9 @@ export default Plugin.define({
 					question: Schema.String.annotate({ description: "What to ask, in plain words." }),
 					timeout_ms: Schema.optional(Schema.Number.annotate({ description: "How long to wait. Default 120000." })),
 					delivery: Schema.optional(
-						Schema.Literals(["queue", "steer"]).annotate({
+						Schema.Literals(["steer", "queue"]).annotate({
 							description:
-								"`queue` (default) answers after the target finishes its current work; `steer` cuts into the running turn.",
+								"`steer` (default) cuts into the target's running turn; `queue` waits until it finishes its current work.",
 						}),
 					),
 				}),
@@ -118,35 +152,45 @@ export default Plugin.define({
 				}),
 				execute: async (input, context) => {
 					const target = await resolve(input.session)
-					// `queue` lands after the target finishes what it is doing; `steer` cuts into the
-					// current turn. Queue by default so a busy session is never derailed to answer.
+					// The stamp is built here, never accepted from the caller, so no tool argument
+					// can drop or fake it: every question arrives tagged with its sender.
+					const stamp = await senderStamp(context.sessionID)
+					const payload = `${stamp}\n${RESUME_LINE}\n\n${input.question}`
+					// `steer` delivers once the target's current turn finishes and never interrupts
+					// it (core's own default). `queue` waits behind work already pending instead.
 					const admitted = await ctx.session.prompt({
 						sessionID: target.sessionID,
-						text: input.question,
-						delivery: input.delivery ?? "queue",
+						text: payload,
+						delivery: input.delivery ?? "steer",
 						metadata: { from_session: context.sessionID, kind: "session_ask" },
 					})
 					const timeout = input.timeout_ms ?? DEFAULT_WAIT_MS
-					let answered = true
-					await Promise.race([
-						ctx.session.wait({ sessionID: target.sessionID }),
-						new Promise((resolveTimeout) => setTimeout(() => resolveTimeout(undefined), timeout)).then(() => {
-							answered = false
-						}),
-					])
-					const after = await ctx.session.context({ sessionID: target.sessionID })
-					// Anchor on our own admitted message, so the answer is only this exchange: every
-					// assistant message after it, and none of the work that came before.
-					const anchor = after.findIndex((m) => m.id === admitted.id)
-					const turn = anchor >= 0 ? after.slice(anchor + 1) : after
-					const answer = turn
-						.filter((m) => m.type === "assistant")
-						.map(textOf)
-						.filter(Boolean)
-						.join("\n\n") || newestAssistantText(after)
+					const deadline = Date.now() + timeout
+					let answer = ""
+					// Poll the target's transcript for the first assistant text after our own question,
+					// and return the moment it appears. `session.wait` cannot be used here: it gates on
+					// the session going idle, so a target that keeps working (steer hands the question
+					// into its running turn) would hold the caller until everything it is doing has
+					// finished — the whole response, not the answer.
+					while (Date.now() < deadline) {
+						const rows = await ctx.session.context({ sessionID: target.sessionID })
+						// Anchoring on our own question is the only reliable marker: prompt() returns an
+						// inbox id, and inbox ids never appear among the context rows. The stored text
+						// does, so the last row carrying our exact payload is where this exchange starts.
+						const anchor = lastQuestionIndex(rows, payload, admitted.id)
+						const turn = anchor >= 0 ? rows.slice(anchor + 1) : []
+						answer = turn
+							.filter((m) => m.type === "assistant")
+							.map(textOf)
+							.filter(Boolean)
+							.join("\n\n")
+						if (answer) break
+						await new Promise((resolveTick) => setTimeout(resolveTick, POLL_MS))
+					}
+					const answered = answer !== ""
 					const content = answered
-						? answer || "(the session finished without saying anything)"
-						: `(still working after ${timeout} ms) ${answer}`.trim()
+						? answer
+						: `(no answer within ${timeout} ms — the session is still working. Ask again rather than reading silence as a no.)`
 					return { output: { sessionID: target.sessionID, answered, answer }, content }
 				},
 			})

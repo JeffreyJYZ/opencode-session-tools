@@ -60,19 +60,35 @@ Sends a question to another session and returns its answer.
   "session": "ses_…",
   "question": "Should the deletion of packages/cli/opencode.json be committed?",
   "timeout_ms": 120000,
-  "delivery": "queue"
+  "delivery": "steer"
 }
 ```
 
 - `session` accepts a session id (`ses_…`), an exact or partial title, or a directory.
-- `delivery: "queue"` (default) waits for the target to finish its current work, then answers.
-  `delivery: "steer"` cuts into its running turn — only when the user wants that turn
-  redirected.
+- Every question arrives with a provenance line the tool writes itself:
+
+  ```
+  [sent from session ses_18f2c3a9… model commandcode/deepseek-v4.1-flash#high]
+  [answer, then continue your own work immediately — do not stop or wait]
+  ```
+
+  The first line is built from the asking session's own row, not from any argument, so it
+  cannot be dropped, and it always precedes the question text. The second tells the target the
+  question is a side errand: answer it, then carry on with what it was doing. Neither line can
+  be removed by the sender; treat them as the message's header.
+- `delivery: "steer"` (default) hands the question over as soon as the target's current turn
+  finishes. It never interrupts what is running — no model call, no tool, no shell is cut — it
+  simply waits for this turn to end. `delivery: "queue"` instead waits behind work already
+  pending, so it can sit out several turns before it is read. `steer` is core's own default.
 - The answer is **only this exchange**: every assistant message after the question was
   admitted. The session's earlier work is not included, and it carries on with its own queue
   afterwards.
-- On timeout `answered` is `false` and `answer` holds what it has said so far. Ask again rather
-  than reading silence as a no.
+- The reply is returned the moment it appears — the tool polls the target's transcript and
+  never waits for that session to fall idle, so a target that answers mid-work and keeps going
+  costs you seconds, not its whole run. Measured: 7 s against a session that stayed busy
+  afterwards, with `answer` exactly `pong`.
+- `answered` is `false` when the timeout expires without any reply text; the target may still
+  be working. Ask again rather than reading silence as a no.
 - The question carries `metadata.from_session`, so the other side can see who asked.
 
 ### `session_rename`
