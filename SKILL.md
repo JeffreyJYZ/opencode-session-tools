@@ -83,8 +83,12 @@ Sends a question to another session and returns its answer.
 - The answer is **only this exchange**: every assistant message after the question was
   admitted. The session's earlier work is not included, and it carries on with its own queue
   afterwards.
-- On timeout `answered` is `false` and `answer` holds what it has said so far. Ask again rather
-  than reading silence as a no.
+- The reply is returned the moment it appears — the tool polls the target's transcript and
+  never waits for that session to fall idle, so a target that answers mid-work and keeps going
+  costs you seconds, not its whole run. Measured: 7 s against a session that stayed busy
+  afterwards, with `answer` exactly `pong`.
+- `answered` is `false` when the timeout expires without any reply text; the target may still
+  be working. Ask again rather than reading silence as a no.
 - The question carries `metadata.from_session`, so the other side can see who asked.
 
 ### `session_rename`
