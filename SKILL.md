@@ -60,7 +60,7 @@ Sends a question to another session and returns its answer.
   "session": "ses_…",
   "question": "Should the deletion of packages/cli/opencode.json be committed?",
   "timeout_ms": 120000,
-  "delivery": "queue"
+  "delivery": "steer"
 }
 ```
 
@@ -74,9 +74,10 @@ Sends a question to another session and returns its answer.
   It is built from the asking session's own row, not from any argument, so it cannot be
   dropped, and it always precedes the question text. Neither the sender nor the target can
   remove it; treat it as the message's header.
-- `delivery: "queue"` (default) waits for the target to finish its current work, then answers.
-  `delivery: "steer"` cuts into its running turn — only when the user wants that turn
-  redirected.
+- `delivery: "steer"` (default) hands the question over as soon as the target's current turn
+  finishes. It never interrupts what is running — no model call, no tool, no shell is cut — it
+  simply waits for this turn to end. `delivery: "queue"` instead waits behind work already
+  pending, so it can sit out several turns before it is read. `steer` is core's own default.
 - The answer is **only this exchange**: every assistant message after the question was
   admitted. The session's earlier work is not included, and it carries on with its own queue
   afterwards.

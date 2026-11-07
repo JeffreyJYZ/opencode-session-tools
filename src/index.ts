@@ -124,9 +124,9 @@ export default Plugin.define({
 					question: Schema.String.annotate({ description: "What to ask, in plain words." }),
 					timeout_ms: Schema.optional(Schema.Number.annotate({ description: "How long to wait. Default 120000." })),
 					delivery: Schema.optional(
-						Schema.Literals(["queue", "steer"]).annotate({
+						Schema.Literals(["steer", "queue"]).annotate({
 							description:
-								"`queue` (default) answers after the target finishes its current work; `steer` cuts into the running turn.",
+								"`steer` (default) cuts into the target's running turn; `queue` waits until it finishes its current work.",
 						}),
 					),
 				}),
@@ -140,12 +140,12 @@ export default Plugin.define({
 					// The stamp is built here, never accepted from the caller, so no tool argument
 					// can drop or fake it: every question arrives tagged with its sender.
 					const stamp = await senderStamp(context.sessionID)
-					// `queue` lands after the target finishes what it is doing; `steer` cuts into the
-					// current turn. Queue by default so a busy session is never derailed to answer.
+					// `steer` delivers once the target's current turn finishes and never interrupts
+					// it (core's own default). `queue` waits behind work already pending instead.
 					const admitted = await ctx.session.prompt({
 						sessionID: target.sessionID,
 						text: `${stamp}\n\n${input.question}`,
-						delivery: input.delivery ?? "queue",
+						delivery: input.delivery ?? "steer",
 						metadata: { from_session: context.sessionID, kind: "session_ask" },
 					})
 					const timeout = input.timeout_ms ?? DEFAULT_WAIT_MS
